@@ -3,7 +3,7 @@ name: Build and Push Docker Images
 on:
   pull_request:
     branches:
-      - master
+      - main
     types:
       - closed
   workflow_dispatch:
