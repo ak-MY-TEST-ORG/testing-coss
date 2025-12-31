@@ -1,4 +1,4 @@
-# Simple UI - AI Services Testing Interfaces-testing-fulling
+# Simple UI - AI Services Testing Interfaces-testing-fulling-next
 
 A modern, responsive Next.js-based web interface for testing ASR, TTS, and NMT microservices. Built with TypeScript, Chakra UI, and React Query for optimal performance and user experience.
 
