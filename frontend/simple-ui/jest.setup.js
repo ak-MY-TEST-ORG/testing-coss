@@ -1,6 +1,6 @@
 import '@testing-library/jest-dom';
 
-// Mock Next.js router
+// Mock Next.js
 jest.mock('next/router', () => ({
   useRouter() {
     return {
