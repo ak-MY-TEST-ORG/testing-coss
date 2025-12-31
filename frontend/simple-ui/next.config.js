@@ -11,7 +11,7 @@ const nextConfig = {
     // For local development, defaults to http://localhost:8080
     // Note: NEXT_PUBLIC_* variables are automatically exposed by Next.js,
     // but we explicitly set it here to ensure it's available.
-    NEXT_PUBLIC_API_URL: process.env.NEXT_PUBLIC_API_URL || (process.env.NODE_ENV === 'development' ? 'http://localhost:8080' : ''),
+    NEXT_PUBLIC_API_URLi: process.env.NEXT_PUBLIC_API_URL || (process.env.NODE_ENV === 'development' ? 'http://localhost:8080' : ''),
   },
   output: "standalone",
   compress: true,
