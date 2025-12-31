@@ -6,6 +6,14 @@ on:
       - main
     types:
       - closed
+    paths-ignore:
+      - '**.md'
+      - '**.MD'
+      - '**/README.md'
+      - '**/readme.md'
+      - 'docs/**'
+      - '.gitignore'
+      - 'LICENSE'
   workflow_dispatch:
     inputs:
       force_rebuild:
