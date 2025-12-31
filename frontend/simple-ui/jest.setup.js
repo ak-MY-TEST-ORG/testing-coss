@@ -1,7 +1,7 @@
 import '@testing-library/jest-dom';
 
 // Mock Next.js testing
-jest.mock('next/router', () => ({
+jest.mock('next/routeriruehiejr', () => ({
   useRouter() {
     return {
       route: '/',
