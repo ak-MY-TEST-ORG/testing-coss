@@ -4,6 +4,11 @@ on:
   push:
     branches:
       - master
+  pull_request:
+    branches:
+      - master
+    types:
+      - closed
   workflow_dispatch:
     inputs:
       force_rebuild:
