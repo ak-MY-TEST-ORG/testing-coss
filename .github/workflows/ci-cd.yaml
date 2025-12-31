@@ -107,7 +107,6 @@ jobs:
             BACKEND_SERVICES=$(echo "$CHANGED_FILES" | grep "^services/" | cut -d'/' -f2 | sort -u | jq -R -s -c 'split("\n")[:-1] | map(select(length>0))' || echo '[]')
             FRONTEND_SERVICES=$(echo "$CHANGED_FILES" | grep "^frontend/" | cut -d'/' -f2 | sort -u | jq -R -s -c 'split("\n")[:-1] | map(select(length>0))' || echo '[]')
           fi
-          fi
           
           # Handle empty arrays
           if [ -z "$BACKEND_SERVICES" ] || [ "$BACKEND_SERVICES" == "null" ]; then
