@@ -9,10 +9,14 @@ on:
       - '**/*.MD'
       - '**/README.md'
       - '**/readme.md'
+      - 'README.md'
+      - 'readme.md'
       - '**/docs/**'
+      - 'docs/**'
       - '**/.gitignore'
+      - '.gitignore'
       - '**/LICENSE'
-      - '**/.github/**'
+      - 'LICENSE'
   workflow_dispatch:
     inputs:
       force_rebuild:
