@@ -79,12 +79,13 @@ jobs:
         if: inputs.is_release == 'true'
         run: |
           echo "💾 Creating backup of current .env file for RELEASE..."
-          ssh -i ~/.ssh/git-action.pem ${{ env.SERVER_USER }}@${{ env.SERVER_HOST }} << 'EOF'
-            if [ -f "${{ env.ENV_FILE_PATH }}" ]; then
-              TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-              cp ${{ env.ENV_FILE_PATH }} ${{ env.ENV_FILE_PATH }}.backup_${TIMESTAMP}
-              cp ${{ env.ENV_FILE_PATH }} ${{{ env.ENV_FILE_PATH }}%/*}/.env.old
-              echo "✅ Backup created: .env.backup_${TIMESTAMP}"
+          ssh -i ~/.ssh/git-action.pem ${{ env.SERVER_USER }}@${{ env.SERVER_HOST }} << EOF
+            ENV_PATH="${{ env.ENV_FILE_PATH }}"
+            if [ -f "\$ENV_PATH" ]; then
+              TIMESTAMP=\$(date +%Y%m%d_%H%M%S)
+              cp "\$ENV_PATH" "\${ENV_PATH}.backup_\${TIMESTAMP}"
+              cp "\$ENV_PATH" "\$(dirname "\$ENV_PATH")/.env.old"
+              echo "✅ Backup created: .env.backup_\${TIMESTAMP}"
               echo "✅ Old env saved: .env.old"
             else
               echo "⚠️  No existing .env file found"
@@ -235,13 +236,14 @@ jobs:
       - name: Verify .env changes
         run: |
           echo "🔍 Verifying .env file changes..."
-          ssh -i ~/.ssh/git-action.pem ${{ env.SERVER_USER }}@${{ env.SERVER_HOST }} << 'EOF'
+          ssh -i ~/.ssh/git-action.pem ${{ env.SERVER_USER }}@${{ env.SERVER_HOST }} << EOF
+            ENV_PATH="${{ env.ENV_FILE_PATH }}"
             echo "📋 Current image tags in .env:"
-            grep "_IMAGE=" ${{ env.ENV_FILE_PATH }} | sort
+            grep "_IMAGE=" "\$ENV_PATH" | sort
             
             echo ""
             echo "📊 Backup files available:"
-            ls -lth ${{{ env.ENV_FILE_PATH }}%/*}/.env* | head -5
+            ls -lth "\$(dirname "\$ENV_PATH")/.env"* | head -5
           EOF
 
       - name: Restart services (Release)
