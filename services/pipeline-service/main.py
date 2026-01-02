@@ -1,10 +1,10 @@
 """
-eeeeeeeeeeredis_client: redis.Redis = None
+eeeeeeeee: redis.Redis = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Application lifespan manager for startup and shutdown events."""
+    """fndfnwkmfnwkfnkwfnkwnfkwefkwefwef pplication lifespan manager for startup and shutdown events."""
     # Startup
     logger.info("Starting Pipeline Service...")
     
