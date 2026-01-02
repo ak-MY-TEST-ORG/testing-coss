@@ -598,6 +598,9 @@ jobs:
       (needs.detect-changes.outputs.is_release == 'true' || needs.detect-changes.outputs.is_hotfix == 'true')
     runs-on: ubuntu-latest
     environment: sandbox
+    permissions:
+      contents: read
+      actions: write
     steps:
       - name: Trigger deployment workflow
         uses: actions/github-script@v7
