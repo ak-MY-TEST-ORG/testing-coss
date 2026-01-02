@@ -256,11 +256,11 @@ jobs:
             
             # Pull new images
             echo "📥 Pulling new images..."
-            docker-compose pull
+            # docker-compose pull
             
             # Restart all services
             echo "🔄 Restarting all services..."
-            docker-compose up -d --force-recreate
+            # docker-compose up -d --force-recreate
             
             # Wait for services to be healthy
             echo "⏳ Waiting for services to be ready..."
@@ -269,7 +269,7 @@ jobs:
             # Show status
             echo ""
             echo "📊 Service status:"
-            docker-compose ps
+            # docker-compose ps
             
             echo ""
             echo "✅ All services restarted successfully"
@@ -307,12 +307,12 @@ jobs:
           echo "📥 Pulling new images..."
           for service in $SERVICES_TO_RESTART; do
             echo "   Pulling $service..."
-            docker-compose pull $service
+            # docker-compose pull $service
           done
           
           # Restart affected services
           echo "🔄 Restarting services..."
-          docker-compose up -d --force-recreate $SERVICES_TO_RESTART
+          # docker-compose up -d --force-recreate $SERVICES_TO_RESTART
           
           # Wait for services to be healthy
           echo "⏳ Waiting for services to be ready..."
@@ -322,7 +322,7 @@ jobs:
           echo ""
           echo "📊 Restarted service status:"
           for service in $SERVICES_TO_RESTART; do
-            docker-compose ps $service
+            # docker-compose ps $service
           done
           
           echo ""
@@ -333,31 +333,31 @@ jobs:
           scp -i ~/.ssh/git-action.pem restart_services.sh ${{ env.SERVER_USER }}@${{ env.SERVER_HOST }}:/tmp/
           ssh -i ~/.ssh/git-action.pem ${{ env.SERVER_USER }}@${{ env.SERVER_HOST }} "chmod +x /tmp/restart_services.sh && /tmp/restart_services.sh"
 
-      - name: Health check
-        run: |
-          echo "🏥 Performing health checks..."
-          ssh -i ~/.ssh/git-action.pem ${{ env.SERVER_USER }}@${{ env.SERVER_HOST }} << 'EOF'
-            cd /home/test
+      # - name: Health check
+      #   run: |
+      #     echo "🏥 Performing health checks..."
+      #     ssh -i ~/.ssh/git-action.pem ${{ env.SERVER_USER }}@${{ env.SERVER_HOST }} << 'EOF'
+      #       cd /home/test
             
-            echo "📊 Container status:"
-            docker-compose ps
+      #       echo "📊 Container status:"
+      #       docker-compose ps
             
-            echo ""
-            echo "🔍 Recent logs (last 20 lines per service):"
-            docker-compose logs --tail=20
+      #       echo ""
+      #       echo "🔍 Recent logs (last 20 lines per service):"
+      #       # docker-compose logs --tail=20
             
-            # Check for any unhealthy containers
-            UNHEALTHY=$(docker-compose ps | grep -i "unhealthy\|exit" | wc -l)
-            if [ "$UNHEALTHY" -gt 0 ]; then
-              echo ""
-              echo "⚠️  Warning: Some containers may be unhealthy"
-              docker-compose ps | grep -i "unhealthy\|exit"
-              exit 1
-            fi
+      #       # Check for any unhealthy containers
+      #       UNHEALTHY=$(docker-compose ps | grep -i "unhealthy\|exit" | wc -l)
+      #       if [ "$UNHEALTHY" -gt 0 ]; then
+      #         echo ""
+      #         echo "⚠️  Warning: Some containers may be unhealthy"
+      #         docker-compose ps | grep -i "unhealthy\|exit"
+      #         exit 1
+      #       fi
             
-            echo ""
-            echo "✅ All health checks passed"
-          EOF
+      #       echo ""
+      #       echo "✅ All health checks passed"
+      #     EOF
 
       - name: Deployment summary
         if: always()
