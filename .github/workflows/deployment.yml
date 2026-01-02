@@ -40,7 +40,7 @@ jobs:
   deploy:
     name: Deploy to Production
     runs-on: ubuntu-latest
-    environment: sandbix
+    environment: sandbox
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -292,11 +292,11 @@ jobs:
             
             # Pull new images
             echo "📥 Pulling new images..."
-            # docker-compose pull
+            docker-compose pull
             
             # Restart all services
             echo "🔄 Restarting all services..."
-            # docker-compose up -d --force-recreate
+            docker-compose up -d --force-recreate
             
             # Wait for services to be healthy
             echo "⏳ Waiting for services to be ready..."
@@ -305,7 +305,7 @@ jobs:
             # Show status
             echo ""
             echo "📊 Service status:"
-            # docker-compose ps
+            docker-compose ps
             
             echo ""
             echo "✅ All services restarted successfully"
@@ -318,6 +318,18 @@ jobs:
           
           SERVICES='${{ inputs.changed_services }}'
           
+          # Build service list
+          SERVICE_LIST=""
+          echo "$SERVICES" | jq -r '.[]' | while read service; do
+            service_name=$(basename "$service")
+            if [ -z "$SERVICE_LIST" ]; then
+              SERVICE_LIST="$service_name"
+            else
+              SERVICE_LIST="$SERVICE_LIST $service_name"
+            fi
+            echo "$service_name" >> /tmp/services_list.txt
+          done
+          
           # Create restart script
           cat > restart_services.sh << 'SCRIPT_EOF'
           #!/bin/bash
@@ -325,30 +337,21 @@ jobs:
           
           cd /home/test
           
-          # Parse service names for docker-compose
-          SERVICES_TO_RESTART=""
-          SCRIPT_EOF
+          # Read service names from file
+          SERVICES_TO_RESTART=$(cat /tmp/services_list.txt | tr '\n' ' ')
           
-          # Add services to restart
-          echo "$SERVICES" | jq -r '.[]' | while read service; do
-            service_name=$(basename "$service")
-            echo "SERVICES_TO_RESTART=\"\$SERVICES_TO_RESTART $service_name\"" >> restart_services.sh
-          done
-          
-          cat >> restart_services.sh << 'SCRIPT_EOF'
-          
-          echo "🔥 Hotfix deployment - restarting services:$SERVICES_TO_RESTART"
+          echo "🔥 Hotfix deployment - restarting services: $SERVICES_TO_RESTART"
           
           # Pull new images for affected services
           echo "📥 Pulling new images..."
           for service in $SERVICES_TO_RESTART; do
             echo "   Pulling $service..."
-            # docker-compose pull $service
+            docker-compose pull $service
           done
           
           # Restart affected services
           echo "🔄 Restarting services..."
-          # docker-compose up -d --force-recreate $SERVICES_TO_RESTART
+          docker-compose up -d --force-recreate $SERVICES_TO_RESTART
           
           # Wait for services to be healthy
           echo "⏳ Waiting for services to be ready..."
@@ -358,14 +361,15 @@ jobs:
           echo ""
           echo "📊 Restarted service status:"
           for service in $SERVICES_TO_RESTART; do
-            # docker-compose ps $service
+            docker-compose ps $service
           done
           
           echo ""
           echo "✅ Affected services restarted successfully"
           SCRIPT_EOF
           
-          # Copy and execute script on server
+          # Copy service list and script to server
+          scp -i ~/.ssh/git-action.pem /tmp/services_list.txt ${{ env.SERVER_USER }}@${{ env.SERVER_HOST }}:/tmp/
           scp -i ~/.ssh/git-action.pem restart_services.sh ${{ env.SERVER_USER }}@${{ env.SERVER_HOST }}:/tmp/
           ssh -i ~/.ssh/git-action.pem ${{ env.SERVER_USER }}@${{ env.SERVER_HOST }} "chmod +x /tmp/restart_services.sh && /tmp/restart_services.sh"
 
