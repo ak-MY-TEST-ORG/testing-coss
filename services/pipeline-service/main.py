@@ -1,32 +1,5 @@
 """
-Pipelinjfefjerjernefwkdc ce Serviceeeeeeeeeeeerherjih- - Multi-task AI Pipeline Orchestration
-for test uijwfjkfgwwwwwwwwh
-Main FastAPI application entry point for the pipeline microservice.
-Orchestrates multiple AI tasks in sequence (e.g., ASR → Translation → TTS).
-"""
-import logging
-import os
-from contextlib import asynccontextmanager
-from typing import Dict, Any
-
-import redis.asyncio as redis
-from fastapi import FastAPI, HTTPException, status
-from fastapi.middleware.cors import CORSMiddleware
-from utils.service_registry_client import ServiceRegistryHttpClient
-
-# Import middleware components
-from middleware.rate_limit_middleware import RateLimitMiddleware
-from middleware.error_handler_middleware import add_error_handlers
-
-# Configure logging
-logging.basicConfig(
-    level=os.getenv("LOG_LEVEL", "INFO"),
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-)
-logger = logging.getLogger(__name__)
-
-# Global variable for Redis connection
-redis_client: redis.Redis = None
+eeeeeeeeeeredis_client: redis.Redis = None
 
 
 @asynccontextmanager
