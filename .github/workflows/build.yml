@@ -589,6 +589,7 @@ jobs:
 
   # Trigger deployment workflow
   trigger-deployment:
+    
     name: Trigger Deployment
     needs: [detect-changes, build-services]
     if: |
@@ -598,6 +599,11 @@ jobs:
     runs-on: ubuntu-latest
     environment: sandbox
     steps:
+      - name: Debug - List available secrets
+        run: |
+          echo "Available secrets in context:"
+          echo "GITHUB_TOKEN exists: ${{ secrets.GITHUB_TOKEN != '' }}"
+          echo "DEPLOY_PAT exists: ${{ secrets.DEPLOY_PAT != '' }}"
       - name: Trigger deployment workflow
         uses: actions/github-script@v7
         with:
