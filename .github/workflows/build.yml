@@ -34,17 +34,18 @@ jobs:
     name: Debug Event Information
     runs-on: ubuntu-latest
     outputs:
-      pr_number: ${{ steps.extract-pr.outputs.pr_number }}
-      pr_title: ${{ steps.extract-pr.outputs.pr_title }}
-      pr_branch: ${{ steps.extract-pr.outputs.pr_branch }}
+      pr_branch: ${{ steps.pr_info.outputs.pr_branch }}
+      is_release: ${{ steps.pr_info.outputs.is_release }}
+      is_hotfix: ${{ steps.pr_info.outputs.is_hotfix }}
+      pr_number: ${{ steps.pr_info.outputs.pr_number }}
+      deployment_type: ${{ steps.pr_info.outputs.deployment_type }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          fetch-depth: 2
+          fetch-depth: 0
 
-      - name: Extract PR information from merge commit
-        id: extract-pr
+      - name: Print event details
         run: |
           echo "================================"
           echo "Event Information"
@@ -54,54 +55,107 @@ jobs:
           echo "Actor: ${{ github.actor }}"
           echo "SHA: ${{ github.sha }}"
           echo "Branch: ${{ github.ref_name }}"
-          echo ""
+          echo "Commit Message: ${{ github.event.head_commit.message }}"
+          echo "================================"
+
+      - name: Detect PR Information
+        id: pr_info
+        run: |
+          # Initialize variables
+          PR_BRANCH=""
+          IS_RELEASE="false"
+          IS_HOTFIX="false"
+          PR_NUMBER=""
+          DEPLOYMENT_TYPE="none"
           
-          # Get the commit message
-          COMMIT_MSG=$(git log -1 --pretty=%B)
-          echo "Commit message:"
-          echo "$COMMIT_MSG"
-          echo ""
-          
-          # Extract PR number from merge commit message
-          # GitHub merge commits typically look like: "Merge pull request #123 from user/branch"
-          PR_NUMBER=$(echo "$COMMIT_MSG" | grep -oP '(?<=Merge pull request #)\d+|(?<=#)\d+(?= from)' | head -n 1)
-          
-          # Alternative patterns for squash merges: "Title (#123)"
-          if [ -z "$PR_NUMBER" ]; then
-            PR_NUMBER=$(echo "$COMMIT_MSG" | grep -oP '\(#\K\d+(?=\))' | head -n 1)
-          fi
-          
-          if [ -n "$PR_NUMBER" ]; then
-            echo "✅ PR Number detected: #$PR_NUMBER"
-            echo "pr_number=$PR_NUMBER" >> $GITHUB_OUTPUT
+          # Check if this is a push to main (potential merge)
+          if [ "${{ github.event_name }}" == "push" ] && [ "${{ github.ref_name }}" == "main" ]; then
+            echo "🔍 Analyzing push to main branch..."
             
-            # Try to extract the source branch from merge commit
-            PR_BRANCH=$(echo "$COMMIT_MSG" | grep -oP '(?<=from )[\w\-./]+' | head -n 1)
-            if [ -n "$PR_BRANCH" ]; then
-              echo "🔀 Source branch: $PR_BRANCH"
-              echo "pr_branch=$PR_BRANCH" >> $GITHUB_OUTPUT
+            # Get commit message
+            COMMIT_MSG="${{ github.event.head_commit.message }}"
+            echo "📝 Commit message: $COMMIT_MSG"
+            
+            # Method 1: Extract from commit message (GitHub default merge format)
+            # Format: "Merge pull request #123 from owner/branch-name"
+            if echo "$COMMIT_MSG" | grep -q "Merge pull request"; then
+              PR_NUMBER=$(echo "$COMMIT_MSG" | grep -oP 'Merge pull request #\K\d+' || echo "")
+              PR_BRANCH=$(echo "$COMMIT_MSG" | grep -oP 'from [^/]+/\K.*' | head -1 || echo "")
+              echo "📌 Detected PR merge from commit message"
+              echo "   PR Number: #$PR_NUMBER"
+              echo "   Branch: $PR_BRANCH"
+            fi
+            
+            # Method 2: Check git log for merge commit
+            if [ -z "$PR_BRANCH" ]; then
+              # Get the merge commit details
+              MERGE_INFO=$(git log -1 --pretty=%B HEAD)
               
-              # Check if it's a release or hotfix branch
-              if [[ "$PR_BRANCH" =~ ^release/ ]]; then
-                echo "📦 This is a RELEASE branch merge"
-              elif [[ "$PR_BRANCH" =~ ^hotfix/ ]]; then
-                echo "🔥 This is a HOTFIX branch merge"
+              # Try to extract PR number from merge commit
+              if echo "$MERGE_INFO" | grep -qiE "(merge|pull request|pr)"; then
+                PR_NUMBER=$(echo "$MERGE_INFO" | grep -oP '#\K\d+' | head -1 || echo "")
+                
+                # Get the second parent of the merge (the branch that was merged)
+                if git rev-parse HEAD^2 >/dev/null 2>&1; then
+                  # This is a merge commit, get the branch name from reflog
+                  PR_BRANCH=$(git log -1 --pretty=%D HEAD^2 | grep -oP 'origin/\K[^,]+' | head -1 || echo "")
+                fi
               fi
             fi
             
-            # Extract PR title (first line of commit message, cleaned)
-            PR_TITLE=$(echo "$COMMIT_MSG" | head -n 1 | sed 's/Merge pull request #[0-9]* from [^ ]* //')
-            if [ -n "$PR_TITLE" ]; then
-              echo "📝 PR Title: $PR_TITLE"
-              echo "pr_title=$PR_TITLE" >> $GITHUB_OUTPUT
+            # Method 3: Use GitHub API to get PR info (most reliable)
+            if [ -n "$PR_NUMBER" ]; then
+              echo "🔎 Fetching PR details from GitHub API..."
+              PR_DATA=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+                "https://api.github.com/repos/${{ github.repository }}/pulls/${PR_NUMBER}")
+              
+              if [ $? -eq 0 ] && [ -n "$PR_DATA" ]; then
+                PR_BRANCH=$(echo "$PR_DATA" | jq -r '.head.ref // empty')
+                PR_TITLE=$(echo "$PR_DATA" | jq -r '.title // empty')
+                echo "   PR Title: $PR_TITLE"
+              fi
             fi
-          else
-            echo "ℹ️  No PR number detected (direct push or manual commit)"
-            echo "pr_number=" >> $GITHUB_OUTPUT
-            echo "pr_branch=" >> $GITHUB_OUTPUT
-            echo "pr_title=" >> $GITHUB_OUTPUT
+            
+            # Check if branch matches release or hotfix pattern
+            if [ -n "$PR_BRANCH" ]; then
+              echo ""
+              echo "🎯 Detected merged branch: $PR_BRANCH"
+              
+              if echo "$PR_BRANCH" | grep -qE '^release/'; then
+                IS_RELEASE="true"
+                DEPLOYMENT_TYPE="release"
+                echo "✅ This is a RELEASE branch merge"
+              elif echo "$PR_BRANCH" | grep -qE '^hotfix/'; then
+                IS_HOTFIX="true"
+                DEPLOYMENT_TYPE="hotfix"
+                echo "🔥 This is a HOTFIX branch merge"
+              else
+                DEPLOYMENT_TYPE="regular"
+                echo "ℹ️  This is a regular branch merge"
+              fi
+            else
+              echo "ℹ️  Could not detect merged branch (might be direct push)"
+              DEPLOYMENT_TYPE="direct_push"
+            fi
           fi
           
+          # Set outputs
+          echo "pr_branch=$PR_BRANCH" >> $GITHUB_OUTPUT
+          echo "is_release=$IS_RELEASE" >> $GITHUB_OUTPUT
+          echo "is_hotfix=$IS_HOTFIX" >> $GITHUB_OUTPUT
+          echo "pr_number=$PR_NUMBER" >> $GITHUB_OUTPUT
+          echo "deployment_type=$DEPLOYMENT_TYPE" >> $GITHUB_OUTPUT
+          
+          # Summary
+          echo ""
+          echo "================================"
+          echo "PR Detection Summary"
+          echo "================================"
+          echo "PR Branch: ${PR_BRANCH:-'Not detected'}"
+          echo "PR Number: ${PR_NUMBER:-'Not detected'}"
+          echo "Is Release: $IS_RELEASE"
+          echo "Is Hotfix: $IS_HOTFIX"
+          echo "Deployment Type: $DEPLOYMENT_TYPE"
           echo "================================"
 
   detect-changes:
@@ -113,9 +167,11 @@ jobs:
       has_changes: ${{ steps.detect.outputs.has_changes }}
       short_sha: ${{ steps.detect.outputs.short_sha }}
       image_prefix: ${{ steps.detect.outputs.image_prefix }}
-      pr_number: ${{ needs.debug-event.outputs.pr_number }}
-      pr_title: ${{ needs.debug-event.outputs.pr_title }}
+      changed_services: ${{ steps.detect.outputs.changed_services }}
       pr_branch: ${{ needs.debug-event.outputs.pr_branch }}
+      is_release: ${{ needs.debug-event.outputs.is_release }}
+      is_hotfix: ${{ needs.debug-event.outputs.is_hotfix }}
+      deployment_type: ${{ needs.debug-event.outputs.deployment_type }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -170,6 +226,12 @@ jobs:
           
           echo "🎯 Backend services: $BACKEND_SERVICES"
           echo "🎯 Frontend services: $FRONTEND_SERVICES"
+          
+          # Create changed services list for deployment
+          CHANGED_SERVICES=$(jq -nc --argjson backend "$BACKEND_SERVICES" --argjson frontend "$FRONTEND_SERVICES" \
+            '($backend|map("backend/"+.)) + ($frontend|map("frontend/"+.))')
+          echo "changed_services=$CHANGED_SERVICES" >> $GITHUB_OUTPUT
+          echo "📋 Changed services list: $CHANGED_SERVICES"
           
           # Combine into a single matrix with type information - MUST be on single line
           MATRIX=$(jq -nc --argjson backend "$BACKEND_SERVICES" --argjson frontend "$FRONTEND_SERVICES" '{"include":(($backend|map({service:.,type:"backend",path:("services/"+.)}))+($frontend|map({service:.,type:"frontend",path:("frontend/"+.)})))}')
@@ -236,18 +298,6 @@ jobs:
           echo "🔖 Tag: $COMMIT_SHA"
           echo "📦 Image: $IMAGE"
           
-          # Add PR information to labels if available
-          EXTRA_LABELS=""
-          if [ -n "${{ needs.detect-changes.outputs.pr_number }}" ]; then
-            echo "🔗 PR #${{ needs.detect-changes.outputs.pr_number }}"
-            EXTRA_LABELS="--label org.opencontainers.image.pr=${{ needs.detect-changes.outputs.pr_number }}"
-            
-            if [ -n "${{ needs.detect-changes.outputs.pr_branch }}" ]; then
-              echo "🔀 Source: ${{ needs.detect-changes.outputs.pr_branch }}"
-              EXTRA_LABELS="$EXTRA_LABELS --label org.opencontainers.image.pr.branch=${{ needs.detect-changes.outputs.pr_branch }}"
-            fi
-          fi
-          
           # Build and push with ONLY commit SHA tag
           docker buildx build \
             --platform linux/amd64 \
@@ -255,7 +305,6 @@ jobs:
             --label "org.opencontainers.image.revision=${{ github.sha }}" \
             --label "org.opencontainers.image.source=${{ github.repositoryUrl }}" \
             --label "org.opencontainers.image.created=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" \
-            ${EXTRA_LABELS} \
             --push \
             ${CONTEXT}
           
@@ -328,14 +377,6 @@ jobs:
           echo "🧩 Type:        $TYPE"
           echo "🔖 Commit SHA:  $COMMIT_SHA"
           echo "📌 Full SHA:    ${{ github.sha }}"
-          
-          if [ -n "${{ needs.detect-changes.outputs.pr_number }}" ]; then
-            echo "🔗 PR Number:   #${{ needs.detect-changes.outputs.pr_number }}"
-            if [ -n "${{ needs.detect-changes.outputs.pr_branch }}" ]; then
-              echo "🔀 Source:      ${{ needs.detect-changes.outputs.pr_branch }}"
-            fi
-          fi
-          
           echo ""
           echo "🐳 Image tags:"
           echo "   • ${IMAGE}:${COMMIT_SHA}  👈 Commit SHA tag"
@@ -367,10 +408,7 @@ jobs:
             "timestamp": "$(date -u +'%Y-%m-%dT%H:%M:%SZ')",
             "triggered_by": "${{ github.actor }}",
             "workflow_run": "${{ github.run_id }}",
-            "path": "${{ matrix.path }}",
-            "pr_number": "${{ needs.detect-changes.outputs.pr_number }}",
-            "pr_title": "${{ needs.detect-changes.outputs.pr_title }}",
-            "pr_branch": "${{ needs.detect-changes.outputs.pr_branch }}"
+            "path": "${{ matrix.path }}"
           }
           EOF
 
@@ -404,23 +442,22 @@ jobs:
           echo "**Commit SHA:** \`${{ needs.detect-changes.outputs.short_sha }}\`" >> $GITHUB_STEP_SUMMARY
           echo "**Full SHA:** \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
           echo "**Triggered by:** @${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
-          
-          # Add PR information if available
-          if [ -n "${{ needs.detect-changes.outputs.pr_number }}" ]; then
-            echo "**PR Number:** #${{ needs.detect-changes.outputs.pr_number }}" >> $GITHUB_STEP_SUMMARY
-            if [ -n "${{ needs.detect-changes.outputs.pr_branch }}" ]; then
-              echo "**Source Branch:** \`${{ needs.detect-changes.outputs.pr_branch }}\`" >> $GITHUB_STEP_SUMMARY
-              
-              # Highlight release/hotfix branches
-              if [[ "${{ needs.detect-changes.outputs.pr_branch }}" =~ ^release/ ]]; then
-                echo "**Type:** 📦 Release Branch Merge" >> $GITHUB_STEP_SUMMARY
-              elif [[ "${{ needs.detect-changes.outputs.pr_branch }}" =~ ^hotfix/ ]]; then
-                echo "**Type:** 🔥 Hotfix Branch Merge" >> $GITHUB_STEP_SUMMARY
-              fi
-            fi
-          fi
-          
           echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # PR Information
+          if [ "${{ needs.detect-changes.outputs.pr_branch }}" != "" ]; then
+            echo "## 🔀 PR Merge Information" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "**Merged Branch:** \`${{ needs.detect-changes.outputs.pr_branch }}\`" >> $GITHUB_STEP_SUMMARY
+            echo "**Deployment Type:** \`${{ needs.detect-changes.outputs.deployment_type }}\`" >> $GITHUB_STEP_SUMMARY
+            
+            if [ "${{ needs.detect-changes.outputs.is_release }}" == "true" ]; then
+              echo "**Type:** 🚀 **RELEASE** - Full deployment will be triggered" >> $GITHUB_STEP_SUMMARY
+            elif [ "${{ needs.detect-changes.outputs.is_hotfix }}" == "true" ]; then
+              echo "**Type:** 🔥 **HOTFIX** - Partial deployment of affected services" >> $GITHUB_STEP_SUMMARY
+            fi
+            echo "" >> $GITHUB_STEP_SUMMARY
+          fi
           
           if [ "${{ needs.detect-changes.outputs.has_changes }}" == "true" ] && [ "${{ needs.build-services.result }}" == "success" ]; then
             echo "## ✅ Built Services" >> $GITHUB_STEP_SUMMARY
@@ -496,15 +533,20 @@ jobs:
           echo ""
           echo "🔖 Commit SHA: ${{ needs.detect-changes.outputs.short_sha }}"
           echo "📌 Full SHA:   ${{ github.sha }}"
-          
-          if [ -n "${{ needs.detect-changes.outputs.pr_number }}" ]; then
-            echo "🔗 PR Number:  #${{ needs.detect-changes.outputs.pr_number }}"
-            if [ -n "${{ needs.detect-changes.outputs.pr_branch }}" ]; then
-              echo "🔀 Source:     ${{ needs.detect-changes.outputs.pr_branch }}"
-            fi
-          fi
-          
           echo ""
+          
+          # PR Info
+          if [ "${{ needs.detect-changes.outputs.pr_branch }}" != "" ]; then
+            echo "🔀 PR INFORMATION:"
+            echo "   Branch: ${{ needs.detect-changes.outputs.pr_branch }}"
+            echo "   Type: ${{ needs.detect-changes.outputs.deployment_type }}"
+            if [ "${{ needs.detect-changes.outputs.is_release }}" == "true" ]; then
+              echo "   🚀 RELEASE deployment will be triggered"
+            elif [ "${{ needs.detect-changes.outputs.is_hotfix }}" == "true" ]; then
+              echo "   🔥 HOTFIX deployment will be triggered"
+            fi
+            echo ""
+          fi
           
           # Backend
           if ls build-artifacts/backend-*.json 1> /dev/null 2>&1; then
@@ -545,24 +587,49 @@ jobs:
           done
           echo ""
 
-  # Output PR information for downstream workflows
-  export-pr-info:
-    name: Export PR Information
+  # Trigger deployment workflow
+  trigger-deployment:
+    name: Trigger Deployment
     needs: [detect-changes, build-services]
-    if: needs.detect-changes.outputs.has_changes == 'true'
+    if: |
+      needs.detect-changes.outputs.has_changes == 'true' && 
+      needs.build-services.result == 'success' &&
+      (needs.detect-changes.outputs.is_release == 'true' || needs.detect-changes.outputs.is_hotfix == 'true')
     runs-on: ubuntu-latest
-    outputs:
-      pr_number: ${{ needs.detect-changes.outputs.pr_number }}
-      pr_title: ${{ needs.detect-changes.outputs.pr_title }}
-      pr_branch: ${{ needs.detect-changes.outputs.pr_branch }}
-      short_sha: ${{ needs.detect-changes.outputs.short_sha }}
-      full_sha: ${{ github.sha }}
     steps:
-      - name: Export information
-        run: |
-          echo "Exporting PR information for downstream workflows:"
-          echo "  PR Number: ${{ needs.detect-changes.outputs.pr_number }}"
-          echo "  PR Title: ${{ needs.detect-changes.outputs.pr_title }}"
-          echo "  PR Branch: ${{ needs.detect-changes.outputs.pr_branch }}"
-          echo "  Short SHA: ${{ needs.detect-changes.outputs.short_sha }}"
-          echo "  Full SHA: ${{ github.sha }}"
+      - name: Trigger deployment workflow
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const deploymentType = '${{ needs.detect-changes.outputs.deployment_type }}';
+            const isRelease = '${{ needs.detect-changes.outputs.is_release }}' === 'true';
+            const isHotfix = '${{ needs.detect-changes.outputs.is_hotfix }}' === 'true';
+            const changedServices = ${{ needs.detect-changes.outputs.changed_services }};
+            const shortSha = '${{ needs.detect-changes.outputs.short_sha }}';
+            const prBranch = '${{ needs.detect-changes.outputs.pr_branch }}';
+            
+            console.log('Triggering deployment workflow...');
+            console.log('Deployment type:', deploymentType);
+            console.log('Is Release:', isRelease);
+            console.log('Is Hotfix:', isHotfix);
+            console.log('Changed services:', changedServices);
+            console.log('Commit SHA:', shortSha);
+            console.log('PR Branch:', prBranch);
+            
+            await github.rest.actions.createWorkflowDispatch({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: 'deploy.yml',
+              ref: 'main',
+              inputs: {
+                deployment_type: deploymentType,
+                commit_sha: shortSha,
+                changed_services: JSON.stringify(changedServices),
+                pr_branch: prBranch,
+                is_release: isRelease.toString(),
+                is_hotfix: isHotfix.toString()
+              }
+            });
+            
+            console.log('✅ Deployment workflow triggered successfully');
