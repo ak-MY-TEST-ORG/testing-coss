@@ -1,0 +1,22 @@
+name: Deploy or Next Workflow
+
+on:
+  workflow_run:
+    workflows: ["Build and Push Docker Images"]
+    types: [completed]
+    branches: [main]
+
+jobs:
+  use-pr-info:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Get PR information
+        run: |
+          PR_NUMBER="${{ needs.export-pr-info.outputs.pr_number }}"
+          PR_BRANCH="${{ needs.export-pr-info.outputs.pr_branch }}"
+          
+          if [[ "$PR_BRANCH" =~ ^release/ ]]; then
+            echo "Deploying release branch"
+          elif [[ "$PR_BRANCH" =~ ^hotfix/ ]]; then
+            echo "Deploying hotfix"
+          fi
