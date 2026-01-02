@@ -1,0 +1,387 @@
+name: Deploy to Server
+
+on:
+  workflow_dispatch:
+    inputs:
+      deployment_type:
+        description: 'Deployment type (release/hotfix/regular/direct_push)'
+        required: true
+        type: string
+      commit_sha:
+        description: 'Commit SHA for image tags'
+        required: true
+        type: string
+      changed_services:
+        description: 'JSON array of changed services'
+        required: true
+        type: string
+      pr_branch:
+        description: 'PR branch name'
+        required: false
+        type: string
+      is_release:
+        description: 'Is this a release deployment'
+        required: true
+        type: string
+        default: 'false'
+      is_hotfix:
+        description: 'Is this a hotfix deployment'
+        required: true
+        type: string
+        default: 'false'
+
+env:
+  SERVER_USER: ${{ vars.SERVER_USER }}
+  SERVER_HOST: ${{ secrets.SERVER_HOST }}
+  ENV_FILE_PATH: ${{ vars.ENV_FILE_PATH }}
+  REGISTRY: ghcr.io
+
+jobs:
+  deploy:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Display deployment info
+        run: |
+          echo "╔════════════════════════════════════════════════════════════════╗"
+          echo "║                  DEPLOYMENT INFORMATION                        ║"
+          echo "╚════════════════════════════════════════════════════════════════╝"
+          echo ""
+          echo "🎯 Deployment Type: ${{ inputs.deployment_type }}"
+          echo "🔖 Commit SHA: ${{ inputs.commit_sha }}"
+          echo "🌿 PR Branch: ${{ inputs.pr_branch }}"
+          echo "🚀 Is Release: ${{ inputs.is_release }}"
+          echo "🔥 Is Hotfix: ${{ inputs.is_hotfix }}"
+          echo ""
+          echo "📦 Changed Services:"
+          echo '${{ inputs.changed_services }}' | jq -r '.[]' | sed 's/^/   - /'
+          echo ""
+          echo "═══════════════════════════════════════════════════════════════"
+
+      - name: Setup SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/git-action.pem
+          chmod 600 ~/.ssh/git-action.pem
+          
+          # Add server to known hosts
+          ssh-keyscan -H ${{ env.SERVER_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Test SSH connection
+        run: |
+          echo "🔐 Testing SSH connection..."
+          ssh -i ~/.ssh/git-action.pem ${{ env.SERVER_USER }}@${{ env.SERVER_HOST }} "echo '✅ SSH connection successful'"
+
+      - name: Backup current .env file (Release only)
+        if: inputs.is_release == 'true'
+        run: |
+          echo "💾 Creating backup of current .env file for RELEASE..."
+          ssh -i ~/.ssh/git-action.pem ${{ env.SERVER_USER }}@${{ env.SERVER_HOST }} << 'EOF'
+            if [ -f "${{ env.ENV_FILE_PATH }}" ]; then
+              TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+              cp ${{ env.ENV_FILE_PATH }} ${{ env.ENV_FILE_PATH }}.backup_${TIMESTAMP}
+              cp ${{ env.ENV_FILE_PATH }} ${{{ env.ENV_FILE_PATH }}%/*}/.env.old
+              echo "✅ Backup created: .env.backup_${TIMESTAMP}"
+              echo "✅ Old env saved: .env.old"
+            else
+              echo "⚠️  No existing .env file found"
+            fi
+          EOF
+
+      - name: Update .env for Release deployment
+        if: inputs.is_release == 'true'
+        run: |
+          echo "🚀 RELEASE deployment - Updating ALL service image tags..."
+          
+          # Get repository info
+          REPO_LOWER=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          IMAGE_PREFIX="${{ env.REGISTRY }}/${REPO_LOWER}"
+          COMMIT_SHA="${{ inputs.commit_sha }}"
+          
+          # Parse changed services to create update script
+          SERVICES='${{ inputs.changed_services }}'
+          
+          cat > update_env.sh << 'SCRIPT_EOF'
+          #!/bin/bash
+          set -e
+          
+          ENV_FILE="${{ env.ENV_FILE_PATH }}"
+          COMMIT_SHA="${{ inputs.commit_sha }}"
+          IMAGE_PREFIX="${{ env.REGISTRY }}/$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')"
+          
+          echo "📝 Updating .env file at: $ENV_FILE"
+          echo "🔖 Using commit SHA: $COMMIT_SHA"
+          
+          # Function to update or add image tag in .env
+          update_image_tag() {
+            local service_path=$1
+            local service_name=$(basename $service_path)
+            local service_type=$(dirname $service_path)
+            
+            # Convert service name to uppercase with underscores for env var
+            local env_var_base=$(echo "${service_name}" | tr '[:lower:]' '[:upper:]' | tr '-' '_')
+            local env_var="${env_var_base}_IMAGE"
+            local new_image="${IMAGE_PREFIX}/${service_type}/${service_name}:${COMMIT_SHA}"
+            
+            echo "   Updating ${env_var}=${new_image}"
+            
+            # Check if variable exists
+            if grep -q "^${env_var}=" "$ENV_FILE"; then
+              # Update existing variable
+              sed -i "s|^${env_var}=.*|${env_var}=${new_image}|" "$ENV_FILE"
+            else
+              # Add new variable
+              echo "${env_var}=${new_image}" >> "$ENV_FILE"
+            fi
+          }
+          
+          # Update all changed services
+          SCRIPT_EOF
+          
+          # Add service updates to script
+          echo "$SERVICES" | jq -r '.[]' | while read service; do
+            echo "update_image_tag \"$service\"" >> update_env.sh
+          done
+          
+          cat >> update_env.sh << 'SCRIPT_EOF'
+          
+          echo "✅ All service image tags updated in .env"
+          echo ""
+          echo "📋 Updated services:"
+          grep "_IMAGE=" "$ENV_FILE" | sort
+          SCRIPT_EOF
+          
+          # Copy and execute script on server
+          scp -i ~/.ssh/git-action.pem update_env.sh ${{ env.SERVER_USER }}@${{ env.SERVER_HOST }}:/tmp/
+          ssh -i ~/.ssh/git-action.pem ${{ env.SERVER_USER }}@${{ env.SERVER_HOST }} "chmod +x /tmp/update_env.sh && /tmp/update_env.sh"
+
+      - name: Update .env for Hotfix deployment
+        if: inputs.is_hotfix == 'true'
+        run: |
+          echo "🔥 HOTFIX deployment - Updating ONLY affected service image tags (no backup)..."
+          
+          # Get repository info
+          REPO_LOWER=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          IMAGE_PREFIX="${{ env.REGISTRY }}/${REPO_LOWER}"
+          COMMIT_SHA="${{ inputs.commit_sha }}"
+          
+          # Parse changed services
+          SERVICES='${{ inputs.changed_services }}'
+          
+          cat > update_env.sh << 'SCRIPT_EOF'
+          #!/bin/bash
+          set -e
+          
+          ENV_FILE="${{ env.ENV_FILE_PATH }}"
+          COMMIT_SHA="${{ inputs.commit_sha }}"
+          IMAGE_PREFIX="${{ env.REGISTRY }}/$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')"
+          
+          echo "📝 Updating .env file at: $ENV_FILE"
+          echo "🔖 Using commit SHA: $COMMIT_SHA"
+          echo "🔥 Hotfix mode: Only updating affected services"
+          
+          # Function to update or add image tag in .env
+          update_image_tag() {
+            local service_path=$1
+            local service_name=$(basename $service_path)
+            local service_type=$(dirname $service_path)
+            
+            # Convert service name to uppercase with underscores for env var
+            local env_var_base=$(echo "${service_name}" | tr '[:lower:]' '[:upper:]' | tr '-' '_')
+            local env_var="${env_var_base}_IMAGE"
+            local new_image="${IMAGE_PREFIX}/${service_type}/${service_name}:${COMMIT_SHA}"
+            
+            echo "   🔧 Updating ${env_var}=${new_image}"
+            
+            # Check if variable exists
+            if grep -q "^${env_var}=" "$ENV_FILE"; then
+              # Update existing variable
+              sed -i "s|^${env_var}=.*|${env_var}=${new_image}|" "$ENV_FILE"
+            else
+              # Add new variable
+              echo "${env_var}=${new_image}" >> "$ENV_FILE"
+            fi
+          }
+          
+          # Update only changed services
+          SCRIPT_EOF
+          
+          # Add service updates to script
+          echo "$SERVICES" | jq -r '.[]' | while read service; do
+            echo "update_image_tag \"$service\"" >> update_env.sh
+          done
+          
+          cat >> update_env.sh << 'SCRIPT_EOF'
+          
+          echo "✅ Affected service image tags updated in .env"
+          echo ""
+          echo "📋 Updated services:"
+          SCRIPT_EOF
+          
+          # Add verification for updated services
+          echo "$SERVICES" | jq -r '.[]' | while read service; do
+            service_name=$(basename "$service")
+            env_var=$(echo "${service_name}" | tr '[:lower:]' '[:upper:]' | tr '-' '_')
+            echo "grep \"^${env_var}_IMAGE=\" \"\$ENV_FILE\" || echo \"   ⚠️  ${env_var}_IMAGE not found\"" >> update_env.sh
+          done
+          
+          # Copy and execute script on server
+          scp -i ~/.ssh/git-action.pem update_env.sh ${{ env.SERVER_USER }}@${{ env.SERVER_HOST }}:/tmp/
+          ssh -i ~/.ssh/git-action.pem ${{ env.SERVER_USER }}@${{ env.SERVER_HOST }} "chmod +x /tmp/update_env.sh && /tmp/update_env.sh"
+
+      - name: Verify .env changes
+        run: |
+          echo "🔍 Verifying .env file changes..."
+          ssh -i ~/.ssh/git-action.pem ${{ env.SERVER_USER }}@${{ env.SERVER_HOST }} << 'EOF'
+            echo "📋 Current image tags in .env:"
+            grep "_IMAGE=" ${{ env.ENV_FILE_PATH }} | sort
+            
+            echo ""
+            echo "📊 Backup files available:"
+            ls -lth ${{{ env.ENV_FILE_PATH }}%/*}/.env* | head -5
+          EOF
+
+      - name: Restart services (Release)
+        if: inputs.is_release == 'true'
+        run: |
+          echo "🔄 Restarting all services for release deployment..."
+          ssh -i ~/.ssh/git-action.pem ${{ env.SERVER_USER }}@${{ env.SERVER_HOST }} << 'EOF'
+            cd /home/test
+            
+            # Pull new images
+            echo "📥 Pulling new images..."
+            docker-compose pull
+            
+            # Restart all services
+            echo "🔄 Restarting all services..."
+            docker-compose up -d --force-recreate
+            
+            # Wait for services to be healthy
+            echo "⏳ Waiting for services to be ready..."
+            sleep 10
+            
+            # Show status
+            echo ""
+            echo "📊 Service status:"
+            docker-compose ps
+            
+            echo ""
+            echo "✅ All services restarted successfully"
+          EOF
+
+      - name: Restart services (Hotfix)
+        if: inputs.is_hotfix == 'true'
+        run: |
+          echo "🔄 Restarting only affected services for hotfix..."
+          
+          SERVICES='${{ inputs.changed_services }}'
+          
+          # Create restart script
+          cat > restart_services.sh << 'SCRIPT_EOF'
+          #!/bin/bash
+          set -e
+          
+          cd /home/test
+          
+          # Parse service names for docker-compose
+          SERVICES_TO_RESTART=""
+          SCRIPT_EOF
+          
+          # Add services to restart
+          echo "$SERVICES" | jq -r '.[]' | while read service; do
+            service_name=$(basename "$service")
+            echo "SERVICES_TO_RESTART=\"\$SERVICES_TO_RESTART $service_name\"" >> restart_services.sh
+          done
+          
+          cat >> restart_services.sh << 'SCRIPT_EOF'
+          
+          echo "🔥 Hotfix deployment - restarting services:$SERVICES_TO_RESTART"
+          
+          # Pull new images for affected services
+          echo "📥 Pulling new images..."
+          for service in $SERVICES_TO_RESTART; do
+            echo "   Pulling $service..."
+            docker-compose pull $service
+          done
+          
+          # Restart affected services
+          echo "🔄 Restarting services..."
+          docker-compose up -d --force-recreate $SERVICES_TO_RESTART
+          
+          # Wait for services to be healthy
+          echo "⏳ Waiting for services to be ready..."
+          sleep 10
+          
+          # Show status of restarted services
+          echo ""
+          echo "📊 Restarted service status:"
+          for service in $SERVICES_TO_RESTART; do
+            docker-compose ps $service
+          done
+          
+          echo ""
+          echo "✅ Affected services restarted successfully"
+          SCRIPT_EOF
+          
+          # Copy and execute script on server
+          scp -i ~/.ssh/git-action.pem restart_services.sh ${{ env.SERVER_USER }}@${{ env.SERVER_HOST }}:/tmp/
+          ssh -i ~/.ssh/git-action.pem ${{ env.SERVER_USER }}@${{ env.SERVER_HOST }} "chmod +x /tmp/restart_services.sh && /tmp/restart_services.sh"
+
+      - name: Health check
+        run: |
+          echo "🏥 Performing health checks..."
+          ssh -i ~/.ssh/git-action.pem ${{ env.SERVER_USER }}@${{ env.SERVER_HOST }} << 'EOF'
+            cd /home/test
+            
+            echo "📊 Container status:"
+            docker-compose ps
+            
+            echo ""
+            echo "🔍 Recent logs (last 20 lines per service):"
+            docker-compose logs --tail=20
+            
+            # Check for any unhealthy containers
+            UNHEALTHY=$(docker-compose ps | grep -i "unhealthy\|exit" | wc -l)
+            if [ "$UNHEALTHY" -gt 0 ]; then
+              echo ""
+              echo "⚠️  Warning: Some containers may be unhealthy"
+              docker-compose ps | grep -i "unhealthy\|exit"
+              exit 1
+            fi
+            
+            echo ""
+            echo "✅ All health checks passed"
+          EOF
+
+      - name: Deployment summary
+        if: always()
+        run: |
+          echo ""
+          echo "╔════════════════════════════════════════════════════════════════╗"
+          echo "║                  DEPLOYMENT SUMMARY                            ║"
+          echo "╚════════════════════════════════════════════════════════════════╝"
+          echo ""
+          echo "🎯 Type: ${{ inputs.deployment_type }}"
+          echo "🔖 SHA: ${{ inputs.commit_sha }}"
+          echo "🌿 Branch: ${{ inputs.pr_branch }}"
+          echo ""
+          if [ "${{ job.status }}" == "success" ]; then
+            echo "✅ Deployment completed successfully!"
+          else
+            echo "❌ Deployment failed - check logs above"
+            echo ""
+            echo "🔄 To rollback, restore from:"
+            echo "   - .env.old (previous version)"
+            echo "   - .env.backup_* (timestamped backups)"
+          fi
+          echo ""
+          echo "═══════════════════════════════════════════════════════════════"
+
+      - name: Cleanup
+        if: always()
+        run: |
+          rm -f ~/.ssh/git-action.pem
+          echo "🧹 Cleanup completed"
