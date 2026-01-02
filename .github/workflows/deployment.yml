@@ -45,36 +45,6 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Validate environment variables
-        run: |
-          echo "🔍 Validating required environment variables..."
-          
-          if [ -z "${{ env.SERVER_HOST }}" ]; then
-            echo "❌ ERROR: SERVER_HOST is not set or is empty"
-            echo "Please set SERVER_HOST in GitHub Secrets"
-            exit 1
-          fi
-          
-          if [ -z "${{ env.SERVER_USER }}" ]; then
-            echo "❌ ERROR: SERVER_USER is not set or is empty"
-            echo "Please set SERVER_USER in GitHub Variables"
-            exit 1
-          fi
-          
-          if [ -z "${{ env.ENV_FILE_PATH }}" ]; then
-            echo "❌ ERROR: ENV_FILE_PATH is not set or is empty"
-            echo "Please set ENV_FILE_PATH in GitHub Variables"
-            exit 1
-          fi
-          
-          if [ -z "${{ secrets.SSH_PRIVATE_KEY }}" ]; then
-            echo "❌ ERROR: SSH_PRIVATE_KEY is not set or is empty"
-            echo "Please set SSH_PRIVATE_KEY in GitHub Secrets"
-            exit 1
-          fi
-          
-          echo "✅ All required environment variables are set"
-
       - name: Display deployment info
         run: |
           echo "╔════════════════════════════════════════════════════════════════╗"
@@ -93,6 +63,36 @@ jobs:
           echo '${{ inputs.changed_services }}' | jq -r '.[]' | sed 's/^/   - /'
           echo ""
           echo "═══════════════════════════════════════════════════════════════"
+
+      - name: Validate environment variables
+        run: |
+          echo "🔍 Validating required environment variables..."
+          
+          if [ -z "${{ env.SERVER_HOST }}" ]; then
+            echo "❌ ERROR: SERVER_HOST is not set or is empty"
+            echo "Please set SERVER_HOST in GitHub Secrets for the 'sandbox' environment"
+            exit 1
+          fi
+          
+          if [ -z "${{ env.SERVER_USER }}" ]; then
+            echo "❌ ERROR: SERVER_USER is not set or is empty"
+            echo "Please set SERVER_USER in GitHub Variables for the 'sandbox' environment"
+            exit 1
+          fi
+          
+          if [ -z "${{ env.ENV_FILE_PATH }}" ]; then
+            echo "❌ ERROR: ENV_FILE_PATH is not set or is empty"
+            echo "Please set ENV_FILE_PATH in GitHub Variables for the 'sandbox' environment"
+            exit 1
+          fi
+          
+          if [ -z "${{ secrets.SSH_PRIVATE_KEY }}" ]; then
+            echo "❌ ERROR: SSH_PRIVATE_KEY is not set or is empty"
+            echo "Please set SSH_PRIVATE_KEY in GitHub Secrets for the 'sandbox' environment"
+            exit 1
+          fi
+          
+          echo "✅ All required environment variables are set"
 
       - name: Setup SSH key
         run: |
